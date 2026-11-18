@@ -70,12 +70,12 @@ Return ONLY valid JSON with exactly these keys:
 "description": 2-3 sentences summarizing the video,
 "tags": list of 6-10 short tags,
 "visual_keywords": list of 6 simple English stock-footage search terms (e.g. "foggy forest", "old map", "stormy ocean")."""
-    resp = client.models.generate_content(
+        resp = client.models.generate_content(
         model=GEMINI_MODEL,
         contents=prompt,
-        config={"response_mime_type": "application/json"},
     )
-    text = re.sub(r"^```(?:json)?|```$", "", resp.text.strip(), flags=re.MULTILINE).strip()
+    raw = resp.text.strip()
+    text = raw[raw.find("{"): raw.rfind("}") + 1]
     data = json.loads(text)
     for key in ("topic", "script", "title", "description", "tags", "visual_keywords"):
         if key not in data:
