@@ -100,6 +100,62 @@ async def make_voice(text, path):
     return words
 
 
+PIPER_VOICE = "en_US-ryan-high"
+PIPER_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/high/" + PIPER_VOICE
+
+
+def download_file(url, dest):
+    with requests.get(url, stream=True, timeout=300) as r:
+        r.raise_for_status()
+        with open(dest, "wb") as f:
+            for part in r.iter_content(1 << 20):
+                f.write(part)
+
+
+def make_voice_piper(text, path):
+    """Local fallback voice. Word timings are estimated from word length."""
+    model = WORK / f"{PIPER_VOICE}.onnx"
+    if not model.exists():
+        log("Downloading Piper voice model...")
+        download_file(PIPER_URL + ".onnx", model)
+        download_file(PIPER_URL + ".onnx.json", WORK / f"{PIPER_VOICE}.onnx.json")
+    subprocess.run(
+        [sys.executable, "-m", "piper", "-m", str(model), "-f", str(path)],
+        input=text.encode("utf-8"), check=True,
+    )
+    total = audio_duration(path)
+    tokens = text.split()
+    weights = []
+    for t in tokens:
+        w = len(t) + 1
+        if t.endswith((".", "?", "!")):
+            w += 6
+        elif t.endswith((",", ";", ":")):
+            w += 3
+        weights.append(w)
+    scale = (total - 0.2) / sum(weights)
+    words, cur = [], 0.1
+    for t, w in zip(tokens, weights):
+        words.append({"text": t, "start": cur, "end": cur + w * scale})
+        cur += w * scale
+    return words
+
+
+def make_voice_any(text):
+    """Try edge-tts first, then fall back to Piper."""
+    try:
+        path = WORK / "voice.mp3"
+        words = asyncio.run(make_voice(text, path))
+        log("Voice: edge-tts")
+        return path, words
+    except Exception as e:
+        log(f"edge-tts failed ({type(e).__name__}); using Piper instead")
+    path = WORK / "voice.wav"
+    words = make_voice_piper(text, path)
+    log("Voice: Piper")
+    return path, words
+
+
 def audio_duration(path):
     out = subprocess.check_output(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)]
@@ -269,8 +325,7 @@ def main():
     log(f"Topic: {data['topic']} | Title: {data['title']}")
 
     log("Generating voiceover...")
-    voice_path = WORK / "voice.mp3"
-    words = asyncio.run(make_voice(data["script"], voice_path))
+    voice_path, words = make_voice_any(data["script"])
 
     captions_path = WORK / "captions.ass"
     make_captions(words, captions_path)
