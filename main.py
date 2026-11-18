@@ -61,6 +61,7 @@ Format for this video: {fmt}
 Rules:
 - Pick a REAL, well-documented case. Do not invent facts, dates, names or statistics.
 - If unsure about a detail, leave it out. Never accuse real living people of crimes.
+- Plain text only: NO asterisks, markdown, bullet points, parentheses or emojis. Write years and numbers as spoken words (e.g. \"nineteen eighty-two\", not 1982).
 - Script: 110-130 words, spoken text only, short sentences, strong hook in the first sentence, ends with an open question.
 - Do NOT reuse these topics: {json.dumps(done_topics[-150:])}
 
@@ -164,6 +165,69 @@ def make_voice_any(text):
     words = make_voice_piper(text, path)
     log("Voice: Piper")
     return path, words
+
+
+ONES = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+        "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+
+
+def two_digits(n):
+    if n < 20:
+        return ONES[n]
+    return TENS[n // 10] + ("" if n % 10 == 0 else "-" + ONES[n % 10])
+
+
+def year_to_words(y):
+    if y == 2000:
+        return "two thousand"
+    if 2001 <= y <= 2009:
+        return "two thousand " + ONES[y - 2000]
+    hi, lo = divmod(y, 100)
+    first = two_digits(hi)
+    if lo == 0:
+        return first + " hundred"
+    if lo < 10:
+        return first + " oh " + ONES[lo]
+    return first + " " + two_digits(lo)
+
+
+def decade_to_words(y):
+    w = year_to_words(y)
+    if w.endswith("y"):
+        return w[:-1] + "ies"
+    return w + "s"
+
+
+def clean_script(text):
+    """Remove markdown symbols and spell out years so the voice reads them naturally."""
+    text = re.sub(r"[*_#`~]", "", text)
+    text = re.sub(r"\(.*?\)", "", text)
+    text = re.sub(r"\b(1[1-9]\d\d|20\d\d)s\b", lambda m: decade_to_words(int(m.group(1))), text)
+    text = re.sub(r"\b(1[1-9]\d\d|20\d\d)\b", lambda m: year_to_words(int(m.group(1))), text)
+    text = text.replace("&", " and ").replace("%", " percent")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def align_with_whisper(audio_path, fallback_words):
+    """Let Whisper listen to the voiceover and time every spoken word."""
+    try:
+        from faster_whisper import WhisperModel
+        model = WhisperModel("base.en", device="cpu", compute_type="int8")
+        segments, _ = model.transcribe(str(audio_path), word_timestamps=True)
+        words = []
+        for seg in segments:
+            for w in seg.words or []:
+                t = w.word.strip()
+                if t:
+                    words.append({"text": t, "start": w.start, "end": w.end})
+        if len(words) >= 20:
+            log(f"Captions timed by Whisper ({len(words)} words)")
+            return words
+        log("Whisper returned too few words; using original timings")
+    except Exception as e:
+        log(f"Whisper alignment failed ({type(e).__name__}: {e}); using original timings")
+    return fallback_words
 
 
 def audio_duration(path):
@@ -334,8 +398,13 @@ def main():
     data = generate_script(done)
     log(f"Topic: {data['topic']} | Title: {data['title']}")
 
+    data["script"] = clean_script(data["script"])
+    data["title"] = re.sub(r"[*_#`]", "", data["title"]).strip()
+    data["description"] = re.sub(r"[*_#`]", "", data["description"]).strip()
+
     log("Generating voiceover...")
     voice_path, words = make_voice_any(data["script"])
+    words = align_with_whisper(voice_path, words)
 
     captions_path = WORK / "captions.ass"
     make_captions(words, captions_path)
