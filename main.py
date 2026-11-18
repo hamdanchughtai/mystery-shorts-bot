@@ -315,6 +315,43 @@ def get_footage(keywords, needed):
     return clips
 
 
+# ---------- 4b. eerie background sound ----------
+def ambience_graph(duration):
+    rnd = random
+    d = f"{duration:.2f}"
+    base = rnd.choice([41.2, 46.2, 49.0, 55.0, 61.7])
+    trem = rnd.choice([0.2, 0.3, 0.4])
+    shimmer = rnd.choice([740.0, 830.6, 932.3])
+    graph = (
+        f"sine=f={base:.2f}:d={d}[a0];"
+        f"sine=f={base*1.498:.2f}:d={d}[a1];"
+        f"sine=f={base*3:.2f}:d={d}[a2];"                 # audible on phone speakers
+        f"sine=f={base*4*1.006:.2f}:d={d}[a3];"           # detuned -> slow beating unease
+        f"sine=f={base*4*2.378/2:.2f}:d={d}[a4];"         # minor-third dissonance
+        f"sine=f={shimmer:.1f}:d={d}[s0];"
+        f"sine=f={shimmer*1.004:.1f}:d={d}[s1];"
+        f"anoisesrc=c=pink:r=44100:a=0.6:d={d}[n];"
+        f"[a0]volume=1.0[b0];[a1]volume=0.45,tremolo=f={trem}:d=0.6[b1];"
+        f"[a2]volume=1.0,tremolo=f={trem*1.3:.3f}:d=0.5[b2];[a3]volume=0.8[b3];"
+        f"[a4]volume=0.5,tremolo=f={trem*0.8:.3f}:d=0.8[b4];"
+        f"[s0]volume=0.12,tremolo=f={trem*0.6:.3f}:d=0.9[c0];[s1]volume=0.12,tremolo=f={trem*0.5:.3f}:d=0.9[c1];"
+        f"[n]highpass=f=150,lowpass=f=1100,tremolo=f={trem*0.7:.3f}:d=0.85,volume=1.6[bn];"
+        f"[b0][b1][b2][b3][b4][c0][c1][bn]amix=inputs=8:normalize=0,aecho=0.8:0.85:90|180:0.35|0.25,"
+        f"volume=BEDVOL,afade=t=in:d=1.5,afade=t=out:st={max(duration-2,0):.2f}:d=2[bed];"
+        f"aevalsrc='sin(2*PI*(200*t-55*t*t))*exp(-3.2*t)*0.8':d=1.6:s=44100[hit0];"
+        f"anoisesrc=c=brown:r=44100:a=0.9:d=1.2,lowpass=f=1400,afade=t=out:d=1.2[hit1];"
+        f"[hit0][hit1]amix=inputs=2:normalize=0,volume=HITVOL[hit];"
+        f"[bed][hit]amix=inputs=2:normalize=0:duration=first[out]"
+    )
+    return graph.replace("BEDVOL", "0.4").replace("HITVOL", "0.8")
+
+
+def make_ambience(duration, path):
+    """Generate an original eerie drone + opening impact hit (no downloads, no copyright)."""
+    run(["ffmpeg", "-y", "-loglevel", "error", "-filter_complex", ambience_graph(duration),
+         "-map", "[out]", "-ar", "44100", "-ac", "2", str(path)])
+
+
 # ---------- 5. render ----------
 def render(clips, voice_path, captions_path, out_path):
     total = audio_duration(voice_path) + 0.6
@@ -342,11 +379,13 @@ def render(clips, voice_path, captions_path, out_path):
 
     music = sorted(MUSIC_DIR.glob("*.mp3")) if MUSIC_DIR.exists() else []
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", "video_only.mp4", "-i", voice_path.name]
-    if music:
+    if music:  # your own tracks in the music/ folder take priority
         cmd += ["-stream_loop", "-1", "-i", str(Path("..") / random.choice(music))]
-        audio_filter = "[1:a]volume=1.0[v];[2:a]volume=0.12[m];[v][m]amix=inputs=2:duration=first[a]"
+        audio_filter = "[1:a]anull[v];[2:a]volume=0.12[m];[v][m]amix=inputs=2:duration=first:normalize=0[a]"
     else:
-        audio_filter = "[1:a]anull[a]"
+        make_ambience(total + 1, WORK / "ambience.wav")
+        cmd += ["-i", "ambience.wav"]
+        audio_filter = "[1:a]anull[v];[v][2:a]amix=inputs=2:duration=first:normalize=0[a]"
     cmd += [
         "-filter_complex", f"[0:v]ass={captions_path.name}[vout];{audio_filter}",
         "-map", "[vout]", "-map", "[a]",
