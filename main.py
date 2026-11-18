@@ -70,7 +70,7 @@ Return ONLY valid JSON with exactly these keys:
 "description": 2-3 sentences summarizing the video,
 "tags": list of 6-10 short tags,
 "visual_keywords": list of 6 simple English stock-footage search terms (e.g. "foggy forest", "old map", "stormy ocean")."""
-        resp = client.models.generate_content(
+    resp = client.models.generate_content(
         model=GEMINI_MODEL,
         contents=prompt,
     )
