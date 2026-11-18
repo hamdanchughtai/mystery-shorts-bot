@@ -1,6 +1,7 @@
 google-genai
 edge-tts>=7.0.0
 piper-tts
+faster-whisper
 requests
 google-api-python-client
 google-auth
