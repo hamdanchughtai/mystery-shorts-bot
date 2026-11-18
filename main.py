@@ -11,6 +11,7 @@ import random
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import edge_tts
@@ -70,10 +71,19 @@ Return ONLY valid JSON with exactly these keys:
 "description": 2-3 sentences summarizing the video,
 "tags": list of 6-10 short tags,
 "visual_keywords": list of 6 simple English stock-footage search terms (e.g. "foggy forest", "old map", "stormy ocean")."""
-    resp = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-    )
+    resp = None
+    for model in (GEMINI_MODEL, "gemini-2.5-flash-lite", GEMINI_MODEL):
+        for attempt in range(1, 4):
+            try:
+                resp = client.models.generate_content(model=model, contents=prompt)
+                break
+            except Exception as e:
+                log(f"Gemini {model} attempt {attempt} failed: {type(e).__name__}")
+                time.sleep(15 * attempt)
+        if resp is not None:
+            break
+    if resp is None:
+        raise RuntimeError("Gemini unavailable after several retries")
     raw = resp.text.strip()
     text = raw[raw.find("{"): raw.rfind("}") + 1]
     data = json.loads(text)
